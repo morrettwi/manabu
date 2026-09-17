@@ -50,3 +50,11 @@ coverage/
 # Misc
 *.tgz
 .DS_Store
+
+# EAS
+.easignore
+expo-env.d.ts.bak
+
+# Metro / bundler cache
+.metro-cache/
+.expo/
