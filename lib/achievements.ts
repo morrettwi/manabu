@@ -20,6 +20,7 @@ export const achievements: Achievement[] = [
   { id: 'master-10', title: 'Penguasa Kana', description: 'Kuasai 10 kartu', icon: '📚', target: 10, metric: 'mastered', color: '#F472B6' },
   { id: 'master-50', title: 'Ahli', description: 'Kuasai 50 kartu', icon: '🎓', target: 50, metric: 'mastered', color: '#10B981' },
   { id: 'master-100', title: 'Master', description: 'Kuasai 100 kartu', icon: '🏆', target: 100, metric: 'mastered', color: '#FBBF24' },
+  { id: 'placement', title: 'Diukir', description: 'Selesaikan tes penempatan', icon: '📐', target: 1, metric: 'lessons', color: '#A78BFA' },
 ];
 
 export function getUnlockedAchievements(

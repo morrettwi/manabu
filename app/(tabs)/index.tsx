@@ -5,9 +5,13 @@ import { useRouter } from 'expo-router';
 import { ScreenContainer } from '../../components/ScreenContainer';
 import { StatCard } from '../../components/StatCard';
 import { ProgressBar } from '../../components/ProgressBar';
+import { DailyPlanCard } from '../../components/DailyPlanCard';
+import { WeaknessBanner } from '../../components/WeaknessBanner';
 import { colors, fontSize, radius, spacing } from '../../lib/theme';
-import { getXP, getLevel, getStreak, getSettings, loadCards, getStats } from '../../lib/storage';
+import { getXP, getLevel, getStreak, getSettings, loadCards, getStats, type DailyPlan } from '../../lib/storage';
 import { getDueCards, getSRSStats, type SRSCard } from '../../lib/srs';
+import { getDailyPlanLive } from '../../lib/dailyPlan';
+import { getTopWeaknessMessage } from '../../lib/weakness';
 
 type Lesson = {
   id: string;
@@ -28,11 +32,14 @@ export default function Beranda() {
   const [studiedToday, setStudiedToday] = useState(0);
   const [dueCount, setDueCount] = useState(0);
   const [masteredCount, setMasteredCount] = useState(0);
+  const [dailyPlan, setDailyPlan] = useState<DailyPlan | null>(null);
+  const [weaknessMsg, setWeaknessMsg] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
-    const [xpVal, lvl, str, settings, cards] = await Promise.all([
+    const [xpVal, lvl, str, settings, cards, plan, wmsg] = await Promise.all([
       getXP(), getLevel(), getStreak(), getSettings(), loadCards(),
+      getDailyPlanLive(), getTopWeaknessMessage(),
     ]);
     setXp(xpVal);
     setLevel(lvl);
@@ -42,6 +49,8 @@ export default function Beranda() {
     const stats = getSRSStats(cards);
     setDueCount(stats.due);
     setMasteredCount(stats.mastered);
+    setDailyPlan(plan);
+    setWeaknessMsg(wmsg);
 
     // Hitung yang dipelajari hari ini dari stats
     const dailyStats = await getStats();
@@ -91,6 +100,23 @@ export default function Beranda() {
           <Text style={styles.levelText}>Lv.{level}</Text>
         </View>
       </View>
+
+      {/* Belajar Hari Ini — rencana harian cerdas */}
+      {dailyPlan && (
+        <View style={styles.section}>
+          <DailyPlanCard plan={dailyPlan} onRefresh={loadData} />
+        </View>
+      )}
+
+      {/* Banner kelemahan terdeteksi */}
+      {weaknessMsg && (
+        <View style={styles.section}>
+          <WeaknessBanner
+            message={weaknessMsg}
+            onPress={() => router.push('/kuis?mode=weakness' as any)}
+          />
+        </View>
+      )}
 
       {/* Target harian */}
       <View style={styles.section}>

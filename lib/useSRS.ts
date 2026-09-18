@@ -12,6 +12,7 @@ import {
   RATING,
 } from './srs';
 import { speakJapanese } from './tts';
+import { recordMistake } from './weakness';
 
 export type SRSStats = ReturnType<typeof getSRSStats>;
 
@@ -81,6 +82,18 @@ export function useSRS() {
       // Tambah XP & streak
       await addXP(xpGain);
       await updateStreak();
+
+      // Catat kelemahan bila pengguna lupa total (AGAIN) — sinyal untuk Weakness Detection
+      if (rating === RATING.AGAIN) {
+        await recordMistake({
+          id: currentCard.id,
+          type: currentCard.type,
+          chosen: '?',
+          correct: currentCard.back,
+          timestamp: Date.now(),
+          source: 'srs',
+        });
+      }
 
       // Reset rating "again" → kartu kembali ke antrian
       if (rating === RATING.AGAIN) {

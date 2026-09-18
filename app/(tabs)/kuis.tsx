@@ -1,13 +1,15 @@
 // Kuis — pilihan ganda dengan timer
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StyleSheet, View, Text, Pressable, Animated } from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
 import { ScreenContainer } from '../../components/ScreenContainer';
 import { ProgressBar } from '../../components/ProgressBar';
 import { colors, fontSize, radius, spacing } from '../../lib/theme';
 import { allHiragana, type Kana } from '../../data/hiragana';
 import { allKatakana } from '../../data/katakana';
 import { vocabulary, type Word } from '../../data/vocabulary';
-import { addXP, updateStreak, recordStudy } from '../../lib/storage';
+import { addXP, updateStreak, recordStudy, type Mistake } from '../../lib/storage';
+import { recordMistake, getFocusKana } from '../../lib/weakness';
 import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
 
@@ -20,7 +22,7 @@ type Question = {
   explanation?: string;
 };
 
-type QuizMode = 'kana-reading' | 'vocab-meaning' | 'mixed';
+type QuizMode = 'kana-reading' | 'vocab-meaning' | 'mixed' | 'weakness';
 
 const QUESTION_COUNT = 10;
 const TIME_PER_QUESTION = 15;
@@ -38,6 +40,17 @@ function shuffle<T>(arr: T[]): T[] {
 // Ambil n elemen acak
 function pickRandom<T>(arr: T[], n: number): T[] {
   return shuffle(arr).slice(0, n);
+}
+
+// Pool semua kana + lookup karakter
+const allKanaPool: Kana[] = [...allHiragana, ...allKatakana];
+function kanaByCharacter(ch: string): Kana | undefined {
+  return allKanaPool.find((k) => k.character === ch);
+}
+
+// Infer tipe item dari prompt (kana vs kosakata)
+function inferItemType(prompt: string): Mistake['type'] {
+  return allKanaPool.some((k) => k.character === prompt) ? 'kana' : 'vocabulary';
 }
 
 // Buat soal kana: tampilkan karakter, pilih romaji
@@ -71,15 +84,34 @@ function makeVocabQuestion(): Question {
   };
 }
 
-function makeQuestion(mode: QuizMode): Question {
+function makeQuestion(mode: QuizMode, focusKana: string[] = []): Question {
+  if (mode === 'weakness') return makeWeaknessQuestion(focusKana);
   if (mode === 'vocab-meaning') return makeVocabQuestion();
   if (mode === 'mixed') return Math.random() < 0.5 ? makeKanaQuestion() : makeVocabQuestion();
   return makeKanaQuestion();
 }
 
+// Buat soal dari pasangan tertukar (mode Fokus Kelemahan)
+function makeWeaknessQuestion(focusKana: string[]): Question {
+  const pool = focusKana.map(kanaByCharacter).filter(Boolean) as Kana[];
+  if (pool.length === 0) return makeKanaQuestion();
+  const correct = pickRandom(pool, 1)[0];
+  const wrongs = pickRandom(allKanaPool.filter((k) => k.romaji !== correct.romaji && k.type === correct.type), 3);
+  const choices = shuffle([correct, ...wrongs]).map((k) => k.romaji);
+  return {
+    prompt: correct.character,
+    promptSub: correct.type === 'hiragana' ? 'Hiragana' : 'Katakana',
+    speak: correct.romaji,
+    choices,
+    correctIndex: choices.indexOf(correct.romaji),
+    explanation: `${correct.character} = ${correct.romaji}`,
+  };
+}
+
 type QuizState = 'menu' | 'playing' | 'result';
 
 export default function KuisScreen() {
+  const params = useLocalSearchParams<{ mode?: string }>();
   const [state, setState] = useState<QuizState>('menu');
   const [mode, setMode] = useState<QuizMode>('kana-reading');
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -88,11 +120,20 @@ export default function KuisScreen() {
   const [score, setScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState(TIME_PER_QUESTION);
   const [correctCount, setCorrectCount] = useState(0);
+  const [focusKana, setFocusKana] = useState<string[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Muat kana fokus kelemahan (untuk mode weakness)
+  useEffect(() => {
+    (async () => {
+      const fk = await getFocusKana();
+      setFocusKana(fk);
+    })();
+  }, []);
 
   // Mulai kuis
   const startQuiz = useCallback((m: QuizMode) => {
-    const qs = Array.from({ length: QUESTION_COUNT }, () => makeQuestion(m));
+    const qs = Array.from({ length: QUESTION_COUNT }, () => makeQuestion(m, focusKana));
     setQuestions(qs);
     setMode(m);
     setCurrentQ(0);
@@ -101,7 +142,14 @@ export default function KuisScreen() {
     setSelected(null);
     setTimeLeft(TIME_PER_QUESTION);
     setState('playing');
-  }, []);
+  }, [focusKana]);
+
+  // Auto-start mode weakness bila dibuka via /kuis?mode=weakness
+  useEffect(() => {
+    if (params.mode === 'weakness' && state === 'menu' && focusKana.length > 0) {
+      startQuiz('weakness');
+    }
+  }, [params.mode, state, focusKana, startQuiz]);
 
   // Timer
   useEffect(() => {
@@ -125,8 +173,19 @@ export default function KuisScreen() {
     if (timerRef.current) clearInterval(timerRef.current);
     setSelected(-1); // -1 menandakan timeout
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    // Catat kelemahan: waktu habis dianggap salah
+    const q = questions[currentQ];
+    recordMistake({
+      id: q.prompt,
+      type: inferItemType(q.prompt),
+      chosen: '?',
+      correct: q.choices[q.correctIndex],
+      timestamp: Date.now(),
+      source: 'quiz',
+      mode,
+    });
     setTimeout(() => nextQuestion(), 1500);
-  }, [currentQ]);
+  }, [currentQ, questions, mode]);
 
   // Jawab
   const answer = useCallback((index: number) => {
@@ -134,7 +193,8 @@ export default function KuisScreen() {
     if (timerRef.current) clearInterval(timerRef.current);
     setSelected(index);
 
-    const isCorrect = index === questions[currentQ].correctIndex;
+    const q = questions[currentQ];
+    const isCorrect = index === q.correctIndex;
     if (isCorrect) {
       const points = timeLeft + 5; // bonus kecepatan
       setScore((s) => s + points);
@@ -143,9 +203,19 @@ export default function KuisScreen() {
       addXP(10);
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      // Catat kelemahan: jawaban salah
+      recordMistake({
+        id: q.prompt,
+        type: inferItemType(q.prompt),
+        chosen: q.choices[index],
+        correct: q.choices[q.correctIndex],
+        timestamp: Date.now(),
+        source: 'quiz',
+        mode,
+      });
     }
     setTimeout(() => nextQuestion(), 1500);
-  }, [selected, questions, currentQ, timeLeft]);
+  }, [selected, questions, currentQ, timeLeft, mode]);
 
   const nextQuestion = useCallback(() => {
     if (currentQ + 1 >= questions.length) {
@@ -176,6 +246,9 @@ export default function KuisScreen() {
       { key: 'kana-reading', title: 'Baca Kana', desc: 'Tebak romaji dari huruf', icon: 'あ', color: colors.hiragana },
       { key: 'vocab-meaning', title: 'Arti Kosakata', desc: 'Tebak arti kata Jepang', icon: '📚', color: colors.vocabulary },
       { key: 'mixed', title: 'Campuran', desc: 'Kana + kosakata', icon: '🎲', color: colors.primaryLight },
+      ...(focusKana.length > 0
+        ? [{ key: 'weakness' as QuizMode, title: 'Fokus Kelemahan', desc: 'Latih pasangan tertukar', icon: '🎯', color: colors.accent }]
+        : []),
     ];
     return (
       <ScreenContainer>

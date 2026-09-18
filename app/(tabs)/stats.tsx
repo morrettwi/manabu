@@ -1,34 +1,50 @@
 // Statistik — aktivitas mingguan, kartu dikuasai, pencapaian
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, View, Text, ScrollView, RefreshControl, Dimensions } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, RefreshControl, Dimensions, Pressable } from 'react-native';
+import { useRouter } from 'expo-router';
 import { ScreenContainer } from '../../components/ScreenContainer';
 import { StatCard } from '../../components/StatCard';
 import { ProgressBar } from '../../components/ProgressBar';
+import { ConfusionPairBadge } from '../../components/ConfusionPairBadge';
 import { colors, fontSize, radius, spacing } from '../../lib/theme';
-import { getXP, getLevel, getStreak, getStats, loadCards, type DailyStat } from '../../lib/storage';
+import {
+  getXP, getLevel, getStreak, getStats, loadCards,
+  getPlacement, getUserLevel,
+  type DailyStat, type PlacementResult, type UserLevel,
+} from '../../lib/storage';
 import { getSRSStats } from '../../lib/srs';
+import { getWeaknessReport, type WeaknessReport } from '../../lib/weakness';
+import { levelLabel } from '../../lib/placement';
 import { achievements, getUnlockedAchievements, getNextAchievements } from '../../lib/achievements';
 
 const { width } = Dimensions.get('window');
 const BAR_W = (width - spacing.md * 2 - spacing.sm * 6) / 7;
 
 export default function StatsScreen() {
+  const router = useRouter();
   const [xp, setXp] = useState(0);
   const [level, setLevel] = useState(1);
   const [streak, setStreak] = useState(0);
   const [dailyStats, setDailyStats] = useState<DailyStat[]>([]);
   const [srsStats, setSrsStats] = useState<{ total: number; due: number; mastered: number; learning: number; young: number; newCards: number } | null>(null);
+  const [weakness, setWeakness] = useState<WeaknessReport | null>(null);
+  const [placement, setPlacement] = useState<PlacementResult | null>(null);
+  const [userLevel, setUserLevel] = useState<UserLevel>('pemula');
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
-    const [xpVal, lvl, str, stats, cards] = await Promise.all([
+    const [xpVal, lvl, str, stats, cards, wReport, pResult, uLevel] = await Promise.all([
       getXP(), getLevel(), getStreak(), getStats(), loadCards(),
+      getWeaknessReport(), getPlacement(), getUserLevel(),
     ]);
     setXp(xpVal);
     setLevel(lvl);
     setStreak(str);
     setDailyStats(stats);
     setSrsStats(getSRSStats(cards));
+    setWeakness(wReport);
+    setPlacement(pResult);
+    setUserLevel(uLevel);
   }, []);
 
   useEffect(() => {
@@ -84,6 +100,26 @@ export default function StatsScreen() {
         </View>
       </View>
 
+      {/* Level penempatan */}
+      {placement && (
+        <View style={styles.section}>
+          <View style={styles.levelCard}>
+            <View style={styles.levelRow}>
+              <Text style={styles.levelIcon}>📐</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.levelTitle}>Level: {levelLabel(userLevel)}</Text>
+                <Text style={styles.levelDesc}>
+                  Skor tes: {placement.score}/{placement.total} · Kana {Math.round(placement.kanaAccuracy * 100)}% · Kosakata {Math.round(placement.vocabAccuracy * 100)}%
+                </Text>
+              </View>
+            </View>
+            <Pressable style={styles.retakeBtn} onPress={() => router.push('/placement')}>
+              <Text style={styles.retakeBtnText}>Ulangi Tes Penempatan</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
       {/* Grafik mingguan */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Aktivitas Mingguan</Text>
@@ -132,6 +168,45 @@ export default function StatsScreen() {
               <Text style={styles.srsTotal}>Total Kartu: {srsStats.total}</Text>
             </View>
           </View>
+        </View>
+      )}
+
+      {/* Analisis Kelemahan */}
+      {weakness && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Analisis Kelemahan</Text>
+          {weakness.totalMistakes === 0 ? (
+            <Text style={styles.emptyMsg}>Belum ada data kelemahan. Kerjakan kuis atau SRS untuk mulai dilacak.</Text>
+          ) : (
+            <View style={styles.weakCard}>
+              {weakness.confusions.length > 0 && (
+                <View style={styles.weakBlock}>
+                  <Text style={styles.weakSubTitle}>Pasangan Sering Tertukar</Text>
+                  <View style={styles.confusionsRow}>
+                    {weakness.confusions.map((c, i) => (
+                      <ConfusionPairBadge key={i} a={c.a} b={c.b} count={c.count} reason={c.reason} />
+                    ))}
+                  </View>
+                </View>
+              )}
+              {weakness.weakItems.length > 0 && (
+                <View style={styles.weakBlock}>
+                  <Text style={styles.weakSubTitle}>Item yang Perlu Diperkuat</Text>
+                  {weakness.weakItems.slice(0, 5).map((w, i) => (
+                    <View key={i} style={styles.weakItemRow}>
+                      <Text style={styles.weakItemId}>{w.id}</Text>
+                      <Text style={styles.weakItemStat}>
+                        {Math.round(w.accuracy * 100)}% ({w.correct}/{w.attempts})
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+              {weakness.confusions.length === 0 && weakness.weakItems.length === 0 && (
+                <Text style={styles.emptyMsg}>Tidak ada pola kelemahan signifikan. Terus berlatih!</Text>
+              )}
+            </View>
+          )}
         </View>
       )}
 
@@ -229,4 +304,47 @@ const styles = StyleSheet.create({
   nextTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
   nextDesc: { color: colors.textSecondary, fontSize: fontSize.xs, marginTop: 2 },
   nextCount: { fontSize: fontSize.sm, fontWeight: '700' },
+  // Level penempatan
+  levelCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.surfaceLight,
+  },
+  levelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  levelIcon: { fontSize: 28 },
+  levelTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '700' },
+  levelDesc: { color: colors.textSecondary, fontSize: fontSize.xs, marginTop: 2 },
+  retakeBtn: {
+    marginTop: spacing.sm,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+  },
+  retakeBtnText: { color: '#FFFFFF', fontSize: fontSize.sm, fontWeight: '600' },
+  // Analisis kelemahan
+  emptyMsg: { color: colors.textMuted, fontSize: fontSize.sm, textAlign: 'center', paddingVertical: spacing.md },
+  weakCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.surfaceLight,
+  },
+  weakBlock: { marginBottom: spacing.md },
+  weakSubTitle: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600', marginBottom: spacing.xs },
+  confusionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  weakItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.surfaceLight,
+  },
+  weakItemId: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  weakItemStat: { color: colors.textSecondary, fontSize: fontSize.sm },
 });

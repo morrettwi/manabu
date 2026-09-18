@@ -13,6 +13,15 @@ const KEYS = {
   SETTINGS: '@manabu/settings',
   STATS: '@manabu/stats',
   ACHIEVEMENTS: '@manabu/achievements',
+  // Onboarding & penempatan
+  ONBOARDING: '@manabu/onboarding',
+  USER_LEVEL: '@manabu/user_level',
+  PLACEMENT: '@manabu/placement',
+  // Kelemahan & rencana harian
+  MISTAKES: '@manabu/mistakes',
+  DAILY_PLAN: '@manabu/daily_plan',
+  // Penghitung pelajaran selesai (untuk lencana)
+  LESSONS: '@manabu/lessons',
 } as const;
 
 // --- Kartu SRS ---
@@ -137,6 +146,130 @@ export async function saveSettings(settings: Partial<Settings>): Promise<void> {
 // --- Reset semua data ---
 export async function resetAllData(): Promise<void> {
   await AsyncStorage.multiRemove(Object.values(KEYS));
+}
+
+// ====================================================
+// Onboarding & Tes Penempatan
+// ====================================================
+
+// Tipe level pengguna hasil tes penempatan
+export type UserLevel = 'pemula' | 'dasar' | 'menengah';
+
+// Tipe hasil tes penempatan
+export type PlacementResult = {
+  level: UserLevel;
+  score: number;        // total jawaban benar
+  total: number;        // total soal
+  kanaAccuracy: number; // 0..1
+  vocabAccuracy: number; // 0..1
+  takenAt: number;       // timestamp
+};
+
+export async function isOnboarded(): Promise<boolean> {
+  const data = await AsyncStorage.getItem(KEYS.ONBOARDING);
+  return data === 'true';
+}
+
+export async function setOnboarded(value: boolean): Promise<void> {
+  await AsyncStorage.setItem(KEYS.ONBOARDING, value ? 'true' : 'false');
+}
+
+export async function getUserLevel(): Promise<UserLevel> {
+  const data = await AsyncStorage.getItem(KEYS.USER_LEVEL);
+  return (data as UserLevel) ?? 'pemula';
+}
+
+export async function setUserLevel(level: UserLevel): Promise<void> {
+  await AsyncStorage.setItem(KEYS.USER_LEVEL, level);
+}
+
+export async function getPlacement(): Promise<PlacementResult | null> {
+  const data = await AsyncStorage.getItem(KEYS.PLACEMENT);
+  return data ? (JSON.parse(data) as PlacementResult) : null;
+}
+
+export async function setPlacement(result: PlacementResult): Promise<void> {
+  await AsyncStorage.setItem(KEYS.PLACEMENT, JSON.stringify(result));
+}
+
+// ====================================================
+// Kelemahan (mistake log)
+// ====================================================
+
+// Tipe satu entri kesalahan
+export type Mistake = {
+  id: string;            // id item (mis. karakter kana / id kartu SRS)
+  type: 'kana' | 'kanji' | 'vocabulary' | 'grammar';
+  chosen: string;        // jawaban yang dipilih pengguna
+  correct: string;       // jawaban yang benar
+  timestamp: number;     // waktu kesalahan (ms)
+  source: 'quiz' | 'srs';
+  mode?: string;         // mode kuis (mis. kana-reading, weakness)
+};
+
+const MAX_MISTAKES = 500;
+
+export async function getMistakes(): Promise<Mistake[]> {
+  const data = await AsyncStorage.getItem(KEYS.MISTAKES);
+  return data ? (JSON.parse(data) as Mistake[]) : [];
+}
+
+export async function addMistake(mistake: Mistake): Promise<void> {
+  const mistakes = await getMistakes();
+  mistakes.push(mistake);
+  // Batasi 500 entri terakhir (FIFO)
+  const trimmed = mistakes.slice(-MAX_MISTAKES);
+  await AsyncStorage.setItem(KEYS.MISTAKES, JSON.stringify(trimmed));
+}
+
+export async function clearMistakes(): Promise<void> {
+  await AsyncStorage.setItem(KEYS.MISTAKES, JSON.stringify([]));
+}
+
+// ====================================================
+// Rencana harian (daily plan)
+// ====================================================
+
+export type DailyTask = {
+  id: string;
+  type: 'review' | 'weakness-drill' | 'weak-items' | 'new-items' | 'quiz';
+  title: string;
+  subtitle: string;
+  icon: string;
+  color: string;
+  route: string;          // mis. /srs, /kuis, /kuis?mode=weakness
+  count: number;          // jumlah item target
+  done: boolean;          // sudah selesai? (dihitung live)
+};
+
+export type DailyPlan = {
+  date: string;           // YYYY-MM-DD
+  tasks: DailyTask[];
+};
+
+export async function getDailyPlan(): Promise<DailyPlan | null> {
+  const data = await AsyncStorage.getItem(KEYS.DAILY_PLAN);
+  return data ? (JSON.parse(data) as DailyPlan) : null;
+}
+
+export async function saveDailyPlan(plan: DailyPlan): Promise<void> {
+  await AsyncStorage.setItem(KEYS.DAILY_PLAN, JSON.stringify(plan));
+}
+
+// ====================================================
+// Penghitung pelajaran selesai (untuk lencana)
+// ====================================================
+
+export async function getLessonsDone(): Promise<number> {
+  const data = await AsyncStorage.getItem(KEYS.LESSONS);
+  return data ? parseInt(data, 10) : 0;
+}
+
+export async function addLesson(amount: number = 1): Promise<number> {
+  const current = await getLessonsDone();
+  const updated = current + amount;
+  await AsyncStorage.setItem(KEYS.LESSONS, updated.toString());
+  return updated;
 }
 
 // Ekspor keys untuk debugging
